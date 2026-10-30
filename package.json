@@ -1,0 +1,10 @@
+{
+  "name": "herdr-walkthrough",
+  "private": true,
+  "type": "module",
+  "description": "A Herdr mod: read a diff in the order it makes sense, explained step by step by Claude.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
