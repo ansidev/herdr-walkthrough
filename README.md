@@ -45,6 +45,9 @@ a Codex agent, or any other.
   you come back.
 - **Comments to your agent.** Click any line to comment on it, then **Send** pastes all
   comments, with the line and its code, into an agent in the same space.
+- **Copy as Markdown.** The steps, their order, weights and notes, and what no step covers,
+  on the clipboard: paste it into a pull request's description, a review or a chat. The
+  code stays out; wherever you paste it, the diff is already beside it.
 
 ## Install
 
@@ -65,7 +68,7 @@ Then merge [`keys.json`](keys.json) into `~/.config/herdr-app/keys.json`:
 | `cmd-shift-k` → `mod.open:walkthrough` | Open the walkthrough of the focused terminal's repository |
 | `←` `→` (or `j` `k`) | Previous / next step |
 | Esc | Close a picker, a comment, then the dialog |
-| `walkthrough.generate`, `.cancel`, `.next`, `.prev` | The same, for your own keys |
+| `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy` | The same, and Copy as Markdown, for your own keys |
 
 To keep it beside an agent instead of over it, open it as a pane:
 
@@ -118,6 +121,7 @@ Everything is kept in `~/.herdr/walkthrough/`:
 | `entries/<key>.json` | Finished walkthroughs, the newest 200 |
 | `pointers/<place>.json` | The one shown last per repository and scope |
 | `jobs/<place>/` | A generation in progress: its prompt, `run.sh`, and the answer |
+| `clipboard.md` | The last walkthrough copied as Markdown |
 | `preferences.md` | Optional: your own wishes for tone and emphasis, added to every prompt |
 
 A diff too large for the model (about 175k tokens) is refused rather than cut: a
@@ -142,7 +146,7 @@ walkthrough of half a diff reads exactly as confidently as one of the whole.
 ## Development
 
 ```sh
-npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, and git against real repos
+npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, Markdown export, and git against real repos
 ```
 
 The UI is checked in Herdr: `herdr-app check`, then `herdr-app shot` while it is open.

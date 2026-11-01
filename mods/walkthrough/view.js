@@ -11,7 +11,8 @@ import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
 import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
 import { estimateTokens, codeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
-import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, claudeVersion, systemLocale, ensureDirs } from "./engine.js";
+import { toMarkdown } from "./lib/export.js";
+import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, claudeVersion, systemLocale, ensureDirs } from "./engine.js";
 import { button, chip, menu, picker, formatElapsed, formatTokens } from "./ui.js";
 
 const PREFS = "walkthrough.prefs";
@@ -107,7 +108,7 @@ export class Walkthrough {
       this.watch(cx);
     });
     cx.timer.every(1000, (cx) => this.tick(cx));
-    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev.
+    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy.
     cx.spawn(async (cx) => {
       for (;;) {
         const name = String(await nextCommand()).replace(/^walkthrough\./, "").split(":")[0];
@@ -115,6 +116,7 @@ export class Walkthrough {
         else if (name === "cancel") await this.cancel(cx);
         else if (name === "next") this.go(this.step + 1);
         else if (name === "prev") this.go(this.step - 1);
+        else if (name === "copy") await this.copy(cx);
         cx.notify();
       }
     });
@@ -381,6 +383,21 @@ export class Walkthrough {
       this.comments = this.comments.filter((c) => !mine.includes(c));
     } else {
       this.sent = `Couldn't send: ${(r.stderr || r.stdout || "hc send failed").trim()}`;
+    }
+    cx.notify();
+  }
+
+  /** The walkthrough shown, as Markdown on the clipboard: for a pull request, a review or a chat. */
+  async copy(cx) {
+    const e = this.shown?.entry;
+    if (!e || !this.view) return;
+    const text = toMarkdown(this.view, e.walkthrough, {
+      what: this.diff?.what, model: modelOf(e.model).name, language: languageOf(e.language).name, cost: e.cost });
+    try {
+      await copyText(text);
+      this.sent = "Copied the walkthrough as Markdown.";
+    } catch (err) {
+      this.sent = `Couldn't copy: ${String(err?.message ?? err)}`;
     }
     cx.notify();
   }
@@ -781,6 +798,7 @@ export class Walkthrough {
       .child(button(t, "next", this.step === steps - 1 ? "Not covered →" : "Next →", (_e, cx) => { this.go(this.step + 1); cx.notify(); }, { small: true, disabled: this.step >= steps }))
       .child(div().text_size(11.5).text_color(t.dim).child(this.step < steps ? `${this.visited.size} of ${steps} read · ← → to move` : "End of the walkthrough"))
       .child(div().flex_1())
+      .child(button(t, "copy", "Copy as Markdown", (_e, cx) => cx.spawn(async (cx) => this.copy(cx)), { kind: "ghost", small: true, tooltip: "The steps and notes, without the code: for a pull request, a review or a chat" }))
       .when(Boolean(this.sent), (e) => e.child(div().text_size(11.5).text_color(t.dim).truncate().child(this.sent)))
       .child(div().text_size(11.5).text_color(n ? t.foreground : t.dim).child(n ? `${n} comment${n === 1 ? "" : "s"}` : "Click a line to comment"))
       .when(n > 0, (e) => e
