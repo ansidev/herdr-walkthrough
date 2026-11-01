@@ -80,6 +80,28 @@ every save:
 ln -s "$PWD/herdr-walkthrough/mods/walkthrough" ~/.config/herdr-app/mods/walkthrough
 ```
 
+## Updates
+
+Herdr updates its own mods, not ones you added: yours is a copy, and nothing tells you
+when this repo changes. To hear about a new version, watch the repo for releases (on
+GitHub: **Watch → Custom → Releases**). Each
+[release](https://github.com/dmazlum/herdr-walkthrough/releases) says what changed and whether
+`keys.json` did; merge it again when it did.
+
+The version you have is `"version"` in `~/.config/herdr-app/mods/walkthrough/mod.json`. To
+update, ask your agent to replace that folder with the latest `mods/walkthrough` from
+`github.com/dmazlum/herdr-walkthrough`. Adding it again isn't enough: an agent never
+overwrites a mod, it would add a second copy under a new name. If the mod was renamed when
+it was added (a name clash), the renamed folder is the one to replace, renamed the same way.
+Or by hand:
+
+```sh
+git -C herdr-walkthrough pull          # or clone it again
+rm -rf ~/.config/herdr-app/mods/walkthrough
+cp -R herdr-walkthrough/mods/walkthrough ~/.config/herdr-app/mods/
+herdr-app check ~/.config/herdr-app/mods/walkthrough
+```
+
 ## What it runs
 
 Nothing is generated until you press **Generate**. Opening the walkthrough only reads git.
