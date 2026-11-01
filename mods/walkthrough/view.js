@@ -7,6 +7,7 @@ import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, n
 import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits, pullRequests } from "./lib/sources.js";
 import { overlay, fileTotals } from "./lib/walkthrough.js";
 import { numberLines } from "./lib/hunks.js";
+import { tokenize } from "./lib/highlight.js";
 import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
 import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
 import { estimateTokens, codeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
@@ -32,6 +33,19 @@ function location() {
   const space = spaces().find((s) => s.active), f = focused();
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
   return { space, folder: pane?.cwd || f?.cwd || space?.folder || null, terminal: f?.terminal ?? null };
+}
+
+/** A token's colour, from the theme's own palette so it follows light and dark. */
+function syntaxColor(t, kind) {
+  switch (kind) {
+    case "keyword": return t.ansi5;
+    case "string": return t.ansi2;
+    case "number": case "constant": return t.ansi3;
+    case "function": return t.ansi4;
+    case "type": return t.ansi6;
+    case "comment": return t.dim;
+    default: return t.foreground;
+  }
 }
 
 const scopeName = (scope) => (scope === "staged" ? "staged" : scope === "working" ? "unstaged" : scope);
@@ -489,12 +503,11 @@ export class Walkthrough {
 
   header(t, inDialog) {
     const r = this.repo;
-    return h_flex().h(44).flex_none().px(14).gap(10).items_center().border_b(1).border_color(t.border)
-      .child(div().text_size(14).text_color(t.accent).child("◆"))
-      .child(div().font_semibold().text_size(14).child("Walkthrough"))
+    return h_flex().h(40).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(div().text_size(12).text_color(t.accent).child("◆"))
+      .child(div().font_semibold().text_size(13.5).child("Walkthrough"))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim)
-        .child(r ? `${r.name}${r.branch ? `  ⎇ ${r.branch}` : "  (detached)"}` : this.folder ?? ""))
-      .when(Boolean(this.claude), (el) => el.child(div().text_size(11).text_color(t.dim).child(`claude ${String(this.claude).split(" ")[0]}`)))
+        .child(r ? `${r.name}${r.branch ? `   ⎇ ${r.branch}` : "   (detached)"}` : this.folder ?? ""))
       .when(inDialog, (el) => el.child(button(t, "close", "Esc", () => closeOverlay(props().overlay), { kind: "ghost", small: true })));
   }
 
@@ -689,29 +702,31 @@ export class Walkthrough {
   contents(t) {
     const v = this.view, w = this.shown.entry.walkthrough;
     const uncovered = v.uncovered.length;
-    const stepRow = (s, i) => h_flex().id(`toc-${s.id}`).w_full().px(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
-      .when(i === this.step, (e) => e.bg(t.selected))
+    const stepRow = (s, i) => h_flex().id(`toc-${s.id}`).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
+      .border_l(2).border_color(i === this.step ? t.accent : "#00000000")
+      .when(i === this.step, (e) => e.bg(t.accent + "1f"))
       .when(i !== this.step, (e) => e.hover((st) => st.bg(t.hover)))
       .on_click((_e, cx) => { this.go(i); cx.notify(); })
-      .child(div().flex_none().min_w(18).h(16).px(4).rounded(8).flex().items_center().justify_center().text_size(10).font_semibold()
-        .when(s.outdated, (e) => e.bg(t.blocked).text_color(t.background).child("!"))
-        .when(!s.outdated && this.visited.has(s.id) && i !== this.step, (e) => e.text_color(t.ansi2).child("✓"))
+      .child(div().flex_none().size(18).rounded(5).flex().items_center().justify_center().text_size(10).font_semibold()
+        .when(s.outdated, (e) => e.bg(t.blocked + "29").text_color(t.blocked).child("!"))
+        .when(!s.outdated && this.visited.has(s.id) && i !== this.step, (e) => e.bg(t.raised).text_color(t.ansi2).child("✓"))
         .when(!s.outdated && (!this.visited.has(s.id) || i === this.step), (e) => e.bg(t.raised).text_color(t.muted).child(String(s.position))))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).when(s.weight === "skim", (e) => e.text_color(t.muted)).child(s.title))
       .when(s.weight === "key", (e) => e.child(div().flex_none().size(6).rounded(3).bg(t.accent).tooltip("Key change")));
-    return v_flex().id("contents").w(280).flex_none().h_full().overflow_y_scrollbar().border_r(1).border_color(t.border).p(10).gap(2)
-      .child(div().px(8).text_size(13.5).font_semibold().child(w.title))
-      .when(Boolean(w.summary), (e) => e.child(div().px(8).pt(2).pb(6).text_size(12).text_color(t.muted).child(w.summary)))
+    return v_flex().id("contents").w(248).flex_none().h_full().overflow_y_scrollbar().border_r(1).border_color(t.border).p(10).gap(2)
+      .child(div().px(8).pt(2).text_size(13.5).font_semibold().child(w.title))
+      .when(Boolean(w.summary), (e) => e.child(div().px(8).pt(4).pb(6).text_size(12).line_height(1.5).text_color(t.muted).child(w.summary)))
       .children(v.parts.flatMap((part) => [
-        div().px(8).pt(10).pb(2).text_size(10.5).font_semibold().text_color(t.dim).child(part.title.toUpperCase()),
+        div().px(8).pt(12).pb(3).text_size(10).font_semibold().text_color(t.dim).child(part.title.toUpperCase()),
         ...part.steps.map((s) => stepRow(s, s.position - 1)),
       ]))
       .child(div().mt(8).mx(8).h(1).bg(t.border))
-      .child(h_flex().id("toc-tail").mt(6).w_full().px(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
-        .when(this.step === v.steps.length, (e) => e.bg(t.selected))
+      .child(h_flex().id("toc-tail").mt(6).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
+        .border_l(2).border_color(this.step === v.steps.length ? t.accent : "#00000000")
+        .when(this.step === v.steps.length, (e) => e.bg(t.accent + "1f"))
         .hover((st) => st.bg(t.hover))
         .on_click((_e, cx) => { this.go(v.steps.length); cx.notify(); })
-        .child(div().flex_none().min_w(18).text_center().text_size(11).text_color(t.dim).child("…"))
+        .child(div().flex_none().w(18).text_center().text_size(11).text_color(t.dim).child("…"))
         .child(div().flex_1().text_size(12.5).text_color(t.muted).child("Not covered"))
         .child(div().text_size(11).text_color(t.dim).child(String(uncovered))))
       .child(div().px(8).pt(12).text_size(10.5).text_color(t.dim).child(this.meta()));
@@ -728,16 +743,16 @@ export class Walkthrough {
   page(t, s) {
     const part = this.view.parts[s.part];
     const total = this.view.steps.length;
-    return v_flex().id(`page-${s.id}-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(12)
-      .child(div().text_size(11).text_color(t.dim).child(`${part.title.toUpperCase()}  ·  STEP ${s.position} OF ${total}`))
+    return v_flex().id(`page-${s.id}-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
+      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child(`${part.title.toUpperCase()}  ·  STEP ${s.position} OF ${total}`))
       .child(h_flex().gap(8).items_center().flex_wrap()
-        .child(div().text_size(18).font_semibold().child(s.title))
-        .when(s.weight === "key", (e) => e.child(chip(t, "Key change", t.accent).tooltip("The rest of the change depends on this, or its main behavior lives here. Read it closely.")))
-        .when(s.weight === "skim", (e) => e.child(chip(t, "Context").tooltip("A supporting change, here so the rest makes sense. Safe to skim.")))
-        .when(s.outdated, (e) => e.child(chip(t, "Outdated", t.blocked).tooltip("Code this step described has changed or is gone."))))
-      .child(div().max_w(820).text_size(13.5).line_height(1.55).child(s.text))
-      .when(s.notes.length > 0, (e) => e.child(v_flex().max_w(820).gap(6).children(s.notes.map((n) =>
-        h_flex().gap(8).items_start().child(chip(t, NOTE_LABEL[n.kind], t.blocked).tooltip(NOTE_ABOUT[n.kind])).child(div().flex_1().text_size(12.5).text_color(t.muted).child(n.text))))))
+        .child(div().text_size(17).font_semibold().child(s.title))
+        .when(s.weight === "key", (e) => e.child(chip(t, "Key change", t.accent, t.accent + "14").tooltip("The rest of the change depends on this, or its main behavior lives here. Read it closely.")))
+        .when(s.weight === "skim", (e) => e.child(chip(t, "Context", null, t.raised).tooltip("A supporting change, here so the rest makes sense. Safe to skim.")))
+        .when(s.outdated, (e) => e.child(chip(t, "Outdated", t.blocked, t.blocked + "14").tooltip("Code this step described has changed or is gone."))))
+      .child(div().max_w(820).text_size(13.5).line_height(1.6).child(s.text))
+      .when(s.notes.length > 0, (e) => e.child(v_flex().w_full().max_w(820).gap(6).children(s.notes.map((n) =>
+        h_flex().w_full().gap(8).items_start().child(chip(t, NOTE_LABEL[n.kind], t.blocked, t.blocked + "12").tooltip(NOTE_ABOUT[n.kind])).child(div().flex_1().min_w(0).pt(1).text_size(12.5).line_height(1.5).text_color(t.muted).child(n.text))))))
       .when(s.outdated, (e) => e.child(this.notice(t, t.blocked, s.found.length
         ? `${s.missing} of the ${s.missing + s.found.length} hunks this step described changed or are gone; what's left is below.`
         : "Every hunk this step described has changed or is gone. Regenerate to read the code as it is now.")))
@@ -789,7 +804,7 @@ export class Walkthrough {
       if (lines >= MAX_PAGE_LINES) { cut += hunk.lines.length; continue; }
       const name = `${file.scope}:${file.path}`;
       if (headers && name !== last) {
-        rows.push(h_flex().mt(rows.length ? 10 : 0).h(26).px(10).gap(8).items_center().rounded_t(7).bg(t.raised).border_1().border_color(t.border)
+        rows.push(h_flex().mt(rows.length ? 10 : 0).h(28).px(12).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
           .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().child(file.path))
           .when(twice.has(file.path) || (file.scope === "staged" && this.scope === "uncommitted"), (e) => e.child(chip(t, scopeName(file.scope))))
           .when(file.status !== "modified", (e) => e.child(div().text_size(11).text_color(t.dim).child(file.oldPath ? `${file.status} from ${file.oldPath}` : file.status))));
@@ -808,7 +823,7 @@ export class Walkthrough {
       }
     }
     if (cut) rows.push(div().px(10).py(6).text_size(11.5).text_color(t.dim).child(`${cut} more line${cut === 1 ? "" : "s"} not drawn here.`));
-    return v_flex().w_full().flex_none().rounded(7).border_1().border_color(t.border).overflow_hidden().children(rows);
+    return v_flex().w_full().flex_none().rounded(8).border_1().border_color(t.border).overflow_hidden().children(rows);
   }
 
   line(t, file, { kind, number, text }, font) {
@@ -817,7 +832,7 @@ export class Walkthrough {
     const spot = this.spot(file, number, side);
     const selected = this.target && sameSpot(this.target, spot);
     return h_flex().id(`l-${file.scope}:${file.path}-${side}${number}`).h(20).w_full().gap(8).font_family(font).text_size(11.5).cursor_pointer()
-      .when(kind === "+", (e) => e.bg(t.ansi2 + "1c")).when(kind === "-", (e) => e.bg(t.ansi1 + "1c"))
+      .when(kind === "+", (e) => e.bg(t.ansi2 + "1a")).when(kind === "-", (e) => e.bg(t.ansi1 + "1a"))
       .when(Boolean(selected), (e) => e.bg(t.selection))
       .hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => {
@@ -829,7 +844,9 @@ export class Walkthrough {
       })
       .child(div().w(44).flex_none().text_right().text_color(t.dim).child(String(number)))
       .child(div().w(10).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === " " ? "" : kind))
-      .child(div().flex_1().min_w(0).whitespace_nowrap().overflow_hidden().child(text || " "));
+      .child(h_flex().flex_1().min_w(0).whitespace_nowrap().overflow_hidden().children(text
+        ? tokenize(text, file.path).map((tok) => div().flex_none().text_color(syntaxColor(t, tok.kind)).child(tok.text))
+        : [div().child(" ")]));
   }
 
   commentRow(t, c) {
@@ -863,7 +880,10 @@ export class Walkthrough {
         .when(this.scope === "pr" && Boolean(this.pr), (e) => e.child(button(t, "post", `Post to #${this.pr.number}`,
           (_e, cx) => { this.confirmPost = true; this.sent = null; cx.notify(); }, { kind: "ghost", small: true, tooltip: "Adds the walkthrough as a comment on the pull request, after you confirm" })))
         .child(button(t, "copy", "Copy as Markdown", (_e, cx) => cx.spawn(async (cx) => this.copy(cx)), { kind: "ghost", small: true, tooltip: "The steps and notes, without the code: for a pull request, a review or a chat" }))
-        .when(Boolean(this.sent), (e) => e.child(div().text_size(11.5).text_color(t.dim).truncate().child(this.sent)))
+        .when(Boolean(this.sent), (e) => {
+          const ok = /^(Sent|Copied|Posted)\b/.test(this.sent);
+          return e.child(div().text_size(11.5).text_color(ok ? t.ansi2 : t.dim).truncate().child(ok ? `✓ ${this.sent}` : this.sent));
+        })
         .child(div().text_size(11.5).text_color(n ? t.foreground : t.dim).child(n ? `${n} comment${n === 1 ? "" : "s"}` : "Click a line to comment"))
         .when(n > 0, (e) => e
           .child(picker(t, "pick-agent", agent ? `${agent.program?.name ?? "Agent"} · ${agent.address}` : "No agent here", (_e, cx) => { this.togglePicker("agent"); cx.notify(); }, { disabled: !agent }))

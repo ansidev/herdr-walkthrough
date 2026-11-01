@@ -5,7 +5,7 @@
 Read a change in the order it makes sense, not in the order of its file names. In
 [Herdr](https://herdr.dev), Claude groups a diff's edits into steps, puts them in an order
 where each one builds on the last, and explains what each step changes. The code each step
-talks about is shown under its explanation.
+talks about is shown under its explanation, in syntax colours from your theme.
 
 It explains, it doesn't judge. There are no findings, scores or verdicts. Built for reading
 what an agent (or a colleague) just wrote before you accept it.
@@ -156,7 +156,7 @@ walkthrough of half a diff reads exactly as confidently as one of the whole.
 ## Development
 
 ```sh
-npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, Markdown export, gh (faked), and git against real repos
+npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, Markdown export, syntax colours, gh (faked), and git against real repos
 ```
 
 The UI is checked in Herdr: `herdr-app check`, then `herdr-app shot` while it is open.
