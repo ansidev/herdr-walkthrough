@@ -35,8 +35,12 @@ a Codex agent, or any other.
   under Not covered. **Regenerate** hands the old walkthrough to the model so what is still
   true survives.
 - **Any scope.** Uncommitted (staged, unstaged and new files), Staged, Unstaged, a Branch
-  against its base (committed and uncommitted, without what the base gained since), or one
-  Commit.
+  against its base (committed and uncommitted, without what the base gained since), one
+  Commit, or an open Pull request on GitHub, as GitHub shows its changes.
+- **Pull requests.** Pick one of the repository's open pull requests (your branch's is picked
+  for you) and read a colleague's change in order. When it gets new commits, the steps
+  whose code moved are marked **Outdated**. **Post to #12** adds the walkthrough as a
+  comment on the pull request, after you confirm.
 - **Model and language per walkthrough.** Haiku (default), Sonnet or Opus; explanations in
   fourteen languages, starting from your system's. Identifiers and paths stay as they are.
 - **Paid once.** Walkthroughs are cached by the exact content of the diff, model and
@@ -107,7 +111,9 @@ herdr-app check ~/.config/herdr-app/mods/walkthrough
 
 ## What it runs
 
-Nothing is generated until you press **Generate**. Opening the walkthrough only reads git.
+Nothing is generated until you press **Generate**. Opening the walkthrough only reads git
+(and, on the Pull request tab, asks `gh` for the open pull requests and the picked one's diff).
+Nothing is posted until you press **Post** and confirm.
 
 A generation is one `claude -p` call, in the background, with no tools, no MCP servers, no
 settings, hooks or skills: the model reads the diff and answers in JSON. Without those
@@ -122,6 +128,7 @@ Everything is kept in `~/.herdr/walkthrough/`:
 | `pointers/<place>.json` | The one shown last per repository and scope |
 | `jobs/<place>/` | A generation in progress: its prompt, `run.sh`, and the answer |
 | `clipboard.md` | The last walkthrough copied as Markdown |
+| `pr-comment.md` | The last walkthrough posted to a pull request |
 | `preferences.md` | Optional: your own wishes for tone and emphasis, added to every prompt |
 
 A diff too large for the model (about 175k tokens) is refused rather than cut: a
@@ -135,6 +142,9 @@ walkthrough of half a diff reads exactly as confidently as one of the whole.
 - Claude Code is the only model runner for now (Codex is planned). It must be logged in;
   `claude --version` must work from the PATH Herdr starts programs with.
 - New files over 1 MB, and new files past the first 300, are listed but not read.
+- Pull requests need the [GitHub CLI](https://cli.github.com) (`gh`), logged in, and a GitHub
+  remote. GitHub sends no diff past about 300 files or 20,000 lines; read such a change as a
+  Branch. A pull request is read again when you pick its tab or it, not while it is open.
 - A page draws at most 2,500 lines of code; the rest is counted.
 - Comments are kept while the walkthrough is open, and sent with Enter.
 
@@ -146,7 +156,7 @@ walkthrough of half a diff reads exactly as confidently as one of the whole.
 ## Development
 
 ```sh
-npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, Markdown export, and git against real repos
+npm test    # parsing, hunk ids, digest, prompt, normalizing, staleness, Markdown export, gh (faked), and git against real repos
 ```
 
 The UI is checked in Herdr: `herdr-app check`, then `herdr-app shot` while it is open.

@@ -21,6 +21,7 @@ export const SCOPES = [
   { key: "unstaged", label: "Unstaged", about: "The working tree and new files, not staged" },
   { key: "branch", label: "Branch", about: "Everything this branch adds to its base, committed or not" },
   { key: "commit", label: "Commit", about: "One commit, against its first parent" },
+  { key: "pr", label: "Pull request", about: "An open pull request on GitHub, as GitHub shows its changes (needs gh)" },
 ];
 
 export async function git(exec, cwd, args) {
@@ -59,6 +60,8 @@ export function sourceKey(source) {
   // The branch being read is part of it: two branches against one base are two walkthroughs.
   if (source.kind === "branch") return `branch:${source.base}...${source.head ?? "HEAD"}`;
   if (source.kind === "commit") return `commit:${source.hash}`;
+  // Not pinned to the head commit: when the pull request moves on, its last walkthrough is shown as outdated.
+  if (source.kind === "pr") return `pr:${source.number}`;
   return source.kind;
 }
 
@@ -70,6 +73,7 @@ export function describe(source, repo) {
     case "unstaged": return "Unstaged changes in the working tree, with new files.";
     case "branch": return `Everything branch "${source.head ?? repo?.branch ?? "HEAD"}" adds to "${source.base}", committed or not. Work that came in from ${source.base} is left out.`;
     case "commit": return `Commit ${source.hash.slice(0, 12)}${source.subject ? ` ("${source.subject}")` : ""}, against its first parent.`;
+    case "pr": return `Pull request #${source.number}${source.title ? ` ("${source.title}")` : ""}${source.head && source.base ? `, "${source.head}" into "${source.base}"` : ""}, as GitHub shows its changes.`;
     default: return "Local changes.";
   }
 }
@@ -190,6 +194,9 @@ export async function loadSections(exec, top, source) {
       add("commit", await must(exec, top, ["diff", ...DIFF, parents[1] ?? EMPTY_TREE, source.hash]));
       break;
     }
+    case "pr":
+      add("pr", await gh(exec, top, ["pr", "diff", String(source.number), "--color=never"]));
+      break;
     default:
       throw new Error(`Unknown source "${source.kind}"`);
   }
@@ -224,4 +231,35 @@ export async function recentCommits(exec, top, count = 40) {
     const [hash, short, subject, author, when] = line.split("\x1f");
     return { hash, short, subject, author, when };
   });
+}
+
+/** Runs the GitHub CLI; its failures come back as one readable sentence. */
+async function gh(exec, top, args) {
+  let r;
+  try { r = await exec("gh", args, { cwd: top }); } catch { throw new Error(GH_MISSING); }
+  if (r.code !== 0) throw new Error(ghError(r.stderr || r.stdout));
+  return r.stdout ?? "";
+}
+
+const GH_MISSING = "Pull requests are read with the GitHub CLI (gh), and it isn't installed. Install it, then run gh auth login.";
+
+/** gh's own words, made to say what to do. */
+export function ghError(text) {
+  const t = String(text ?? "").trim();
+  if (/gh auth login|not logged in|authentication/i.test(t)) return "The GitHub CLI isn't logged in. Run gh auth login, then try again.";
+  if (/no git remotes|none of the git remotes|not a github|could not determine base repo/i.test(t)) return "This repository has no GitHub remote, so it has no pull requests to read.";
+  if (/HTTP 406|too_large|diff exceeded|maximum number of (lines|files)/i.test(t)) return "GitHub won't send a diff this large (about 300 files or 20,000 lines). Read it as a Branch instead.";
+  if (/could not resolve to a pullrequest|no pull requests? found/i.test(t)) return "That pull request wasn't found.";
+  return t.split("\n").filter(Boolean).pop() || "gh failed.";
+}
+
+/** The repository's open pull requests, newest update first: { number, title, head, base, author, draft, when, current }. */
+export async function pullRequests(exec, top, branch = null) {
+  const out = await gh(exec, top, ["pr", "list", "--state", "open", "--limit", "50", "--json", "number,title,headRefName,baseRefName,author,isDraft,updatedAt"]);
+  let list;
+  try { list = JSON.parse(out || "[]"); } catch { throw new Error("gh answered with something other than a list of pull requests."); }
+  return list
+    .map((p) => ({ number: p.number, title: p.title ?? "", head: p.headRefName ?? "", base: p.baseRefName ?? "", author: p.author?.login ?? "",
+      draft: Boolean(p.isDraft), updated: p.updatedAt ?? "", current: Boolean(branch) && p.headRefName === branch }))
+    .sort((a, b) => b.updated.localeCompare(a.updated));
 }

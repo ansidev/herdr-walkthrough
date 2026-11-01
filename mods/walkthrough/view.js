@@ -4,7 +4,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, VirtualListScrollHandle } from "gpui-base";
 import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, nextCommand, settings, shared, setShared, watchFolder } from "herdr";
-import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits } from "./lib/sources.js";
+import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits, pullRequests } from "./lib/sources.js";
 import { overlay, fileTotals } from "./lib/walkthrough.js";
 import { numberLines } from "./lib/hunks.js";
 import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
@@ -12,7 +12,7 @@ import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
 import { estimateTokens, codeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
 import { toMarkdown } from "./lib/export.js";
-import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, claudeVersion, systemLocale, ensureDirs } from "./engine.js";
+import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, claudeVersion, systemLocale, ensureDirs } from "./engine.js";
 import { button, chip, menu, picker, formatElapsed, formatTokens } from "./ui.js";
 
 const PREFS = "walkthrough.prefs";
@@ -56,6 +56,11 @@ export class Walkthrough {
     this.bases = [];
     this.commit = null;
     this.commits = [];
+    this.pr = null;
+    this.prs = null; // null until listed
+    this.prError = null;
+    this.confirmPost = false;
+    this.posting = false;
     this.claude = undefined;
     this.diff = null;
     this.cacheKey = null;
@@ -75,7 +80,7 @@ export class Walkthrough {
     this.comments = [];
     this.target = null; // { sk, scope, path, line, kind, code }: the line a comment is being written on
     this.agentTo = null;
-    this.picking = null; // "base" | "commit" | "model" | "language" | "agent"
+    this.picking = null; // "base" | "commit" | "pr" | "model" | "language" | "agent"
     this.menuIndex = 0; // the highlighted row of the open picker, moved by ↑ ↓ and chosen by Enter
     this.menuScroll = VirtualListScrollHandle.new();
     this.sent = null;
@@ -104,6 +109,7 @@ export class Walkthrough {
       this.bases = bases;
       this.commits = commits;
       this.commit = commits[0] ?? null;
+      if (this.scope === "pr") await this.loadPullRequests();
       await this.reload(cx);
       this.watch(cx);
     });
@@ -126,6 +132,7 @@ export class Walkthrough {
   source() {
     if (this.scope === "branch") return this.base ? { kind: "branch", base: this.base, head: this.head ?? this.repo?.branch ?? "HEAD" } : null;
     if (this.scope === "commit") return this.commit ? { kind: "commit", hash: this.commit.hash, subject: this.commit.subject } : null;
+    if (this.scope === "pr") return this.pr ? { kind: "pr", number: this.pr.number, title: this.pr.title, head: this.pr.head, base: this.pr.base } : null;
     return { kind: this.scope };
   }
 
@@ -199,7 +206,8 @@ export class Walkthrough {
     const loop = (folder) => cx.spawn(async (cx) => {
       for (;;) {
         const changed = await watchFolder(folder);
-        if (this.scope !== "commit" && !this.dirty && await matters(top, changed, gitDir)) this.dirty = true;
+        // A commit or a pull request doesn't change with the working tree.
+        if (this.scope !== "commit" && this.scope !== "pr" && !this.dirty && await matters(top, changed, gitDir)) this.dirty = true;
       }
     });
     loop(top);
@@ -326,8 +334,27 @@ export class Walkthrough {
     this.picking = null;
     this.genError = null;
     this.loading = true; // until the read the change starts has finished
+    this.confirmPost = false;
     savePrefs({ scope: key });
-    cx.spawn(async (cx) => this.reload(cx));
+    cx.spawn(async (cx) => {
+      // Listed again each time the tab is picked: pull requests open, close and move on GitHub.
+      if (key === "pr") { cx.notify(); await this.loadPullRequests(); }
+      await this.reload(cx);
+    });
+  }
+
+  /** The open pull requests; the one picked stays picked, else the current branch's is. */
+  async loadPullRequests() {
+    if (!this.repo) return;
+    try {
+      this.prs = await pullRequests(exec, this.repo.top, this.repo.branch);
+      this.prError = null;
+    } catch (e) {
+      this.prs = [];
+      this.prError = String(e?.message ?? e);
+    }
+    const kept = this.pr && this.prs.find((p) => p.number === this.pr.number);
+    this.pr = kept ?? this.prs.find((p) => p.current) ?? null;
   }
 
   choose(kind, value, cx) {
@@ -337,6 +364,7 @@ export class Walkthrough {
     if (kind === "language") { this.language = value; savePrefs({ language: value }); }
     if (kind === "base") { this.base = value; savePrefs({ bases: { ...(prefs().bases ?? {}), [this.repo.top]: value } }); }
     if (kind === "commit") this.commit = value;
+    if (kind === "pr") { this.pr = value; this.confirmPost = false; }
     if (kind === "agent") { this.agentTo = value; cx.notify(); return; }
     cx.spawn(async (cx) => this.reload(cx));
   }
@@ -389,16 +417,38 @@ export class Walkthrough {
 
   /** The walkthrough shown, as Markdown on the clipboard: for a pull request, a review or a chat. */
   async copy(cx) {
-    const e = this.shown?.entry;
-    if (!e || !this.view) return;
-    const text = toMarkdown(this.view, e.walkthrough, {
-      what: this.diff?.what, model: modelOf(e.model).name, language: languageOf(e.language).name, cost: e.cost });
+    const text = this.markdown();
+    if (!text) return;
     try {
       await copyText(text);
       this.sent = "Copied the walkthrough as Markdown.";
     } catch (err) {
       this.sent = `Couldn't copy: ${String(err?.message ?? err)}`;
     }
+    cx.notify();
+  }
+
+  /** The walkthrough shown, as Markdown; null when there is none. */
+  markdown() {
+    const e = this.shown?.entry;
+    if (!e || !this.view) return null;
+    return toMarkdown(this.view, e.walkthrough, { what: this.diff?.what, model: modelOf(e.model).name, language: languageOf(e.language).name, cost: e.cost });
+  }
+
+  /** The walkthrough as a comment on the pull request it is of. Asked first: everyone on the pull request sees it. */
+  async post(cx) {
+    const text = this.markdown(), pr = this.pr;
+    if (!text || !pr || this.scope !== "pr" || this.posting) return;
+    this.posting = true;
+    cx.notify();
+    try {
+      await postComment(this.repo.top, pr.number, text);
+      this.sent = `Posted the walkthrough to #${pr.number}.`;
+    } catch (err) {
+      this.sent = `Couldn't post: ${String(err?.message ?? err)}`;
+    }
+    this.posting = false;
+    this.confirmPost = false;
     cx.notify();
   }
 
@@ -409,6 +459,7 @@ export class Walkthrough {
     if (k === "escape") {
       if (this.picking) this.picking = null;
       else if (this.target) this.target = null;
+      else if (this.confirmPost && !this.posting) this.confirmPost = false;
       else if (props()?.overlay) closeOverlay(props().overlay);
     } else if (this.view && (k === "right" || k === "j" || k === "n")) this.go(this.step + 1);
     else if (this.view && (k === "left" || k === "k" || k === "p")) this.go(this.step - 1);
@@ -466,6 +517,7 @@ export class Walkthrough {
       .when(this.scope === "branch", (el) => el.child(div().text_size(11.5).text_color(t.dim).child("vs"))
         .child(picker(t, "pick-base", this.base ?? "Pick a base", open("base"))))
       .when(this.scope === "commit", (el) => el.child(picker(t, "pick-commit", this.commit ? `${this.commit.short} ${this.commit.subject}` : "Pick a commit", open("commit"))))
+      .when(this.scope === "pr" && Boolean(this.prs?.length), (el) => el.child(picker(t, "pick-pr", this.pr ? `#${this.pr.number} ${this.pr.title}` : "Pick a pull request", open("pr"))))
       .child(div().flex_1())
       .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
       .child(picker(t, "pick-model", modelOf(this.model).name, open("model"), { tooltip: "Model" }))
@@ -482,6 +534,8 @@ export class Walkthrough {
     switch (kind) {
       case "base": return { side: "left", width: 280, items: this.bases.map((b) => ({ label: b, value: b, selected: b === this.base })) };
       case "commit": return { side: "left", width: 460, items: this.commits.map((c) => ({ label: `${c.short}  ${c.subject}`, hint: `${c.author} · ${c.when}`, value: c, selected: c.hash === this.commit?.hash })) };
+      case "pr": return { side: "left", width: 480, items: (this.prs ?? []).map((p) => ({
+        label: `#${p.number}  ${p.title}`, hint: `${p.author} · ${p.head} → ${p.base}${p.draft ? " · draft" : ""}${p.current ? " · this branch" : ""}`, value: p, selected: p.number === this.pr?.number })) };
       case "model": return { side: "right", width: 280, items: MODELS.map((m) => ({ label: m.name, hint: m.about, value: m.key, selected: m.key === this.model })) };
       case "language": return { side: "right", width: 220, items: LANGUAGES.map((l) => ({ label: l.name, right: l.english === l.name ? "" : l.english, value: l.tag, selected: l.tag === this.language })) };
       case "agent": {
@@ -535,7 +589,10 @@ export class Walkthrough {
     if (this.repo === undefined) return center("Reading…");
     if (this.repo === null) return center("Not a git repository.", this.folder ? `Nothing to walk through in ${this.folder}.` : "Focus a terminal in a repository, then open the walkthrough again.");
     if (this.error) return center("Couldn't read the diff.", this.error);
-    if (!this.source()) return center(this.scope === "branch" ? "Pick the branch to compare with." : "Pick a commit.", "Nothing is read or generated until you do.");
+    if (this.scope === "pr" && this.prError) return center("Couldn't list the pull requests.", this.prError);
+    if (this.scope === "pr" && this.prs === null) return center("Reading the pull requests…");
+    if (this.scope === "pr" && !this.prs.length) return center("No open pull requests.", "This repository has none open on GitHub.");
+    if (!this.source()) return center(this.scope === "branch" ? "Pick the branch to compare with." : this.scope === "pr" ? "Pick a pull request." : "Pick a commit.", "Nothing is read or generated until you do.");
     if (!this.diff) return center("Reading the diff…");
     if (!this.diff.files.length) return center("Nothing to walk through.", `No ${SCOPES.find((s) => s.key === this.scope)?.label.toLowerCase()} changes${this.scope === "branch" ? ` against ${this.base}` : ""}.`);
     if (!this.view) return this.job ? this.progress(t) : this.intro(t);
@@ -798,11 +855,18 @@ export class Walkthrough {
       .child(button(t, "next", this.step === steps - 1 ? "Not covered →" : "Next →", (_e, cx) => { this.go(this.step + 1); cx.notify(); }, { small: true, disabled: this.step >= steps }))
       .child(div().text_size(11.5).text_color(t.dim).child(this.step < steps ? `${this.visited.size} of ${steps} read · ← → to move` : "End of the walkthrough"))
       .child(div().flex_1())
-      .child(button(t, "copy", "Copy as Markdown", (_e, cx) => cx.spawn(async (cx) => this.copy(cx)), { kind: "ghost", small: true, tooltip: "The steps and notes, without the code: for a pull request, a review or a chat" }))
-      .when(Boolean(this.sent), (e) => e.child(div().text_size(11.5).text_color(t.dim).truncate().child(this.sent)))
-      .child(div().text_size(11.5).text_color(n ? t.foreground : t.dim).child(n ? `${n} comment${n === 1 ? "" : "s"}` : "Click a line to comment"))
-      .when(n > 0, (e) => e
-        .child(picker(t, "pick-agent", agent ? `${agent.program?.name ?? "Agent"} · ${agent.address}` : "No agent here", (_e, cx) => { this.togglePicker("agent"); cx.notify(); }, { disabled: !agent }))
-        .child(button(t, "send", "Send", (_e, cx) => cx.spawn(async (cx) => this.send(cx)), { kind: "solid", small: true, disabled: !agent, tooltip: "Pastes the comments into the agent and presses Enter" })));
+      .when(this.confirmPost && Boolean(this.pr), (e) => e
+        .child(div().text_size(11.5).text_color(t.foreground).truncate().child(`Post this walkthrough as a comment on #${this.pr.number}? Everyone who can see the pull request will see it.`))
+        .child(button(t, "post-yes", this.posting ? "Posting…" : "Post", (_e, cx) => cx.spawn(async (cx) => this.post(cx)), { kind: "solid", small: true, disabled: this.posting }))
+        .child(button(t, "post-no", "Cancel", (_e, cx) => { this.confirmPost = false; cx.notify(); }, { kind: "ghost", small: true, disabled: this.posting })))
+      .when(!this.confirmPost, (e) => e
+        .when(this.scope === "pr" && Boolean(this.pr), (e) => e.child(button(t, "post", `Post to #${this.pr.number}`,
+          (_e, cx) => { this.confirmPost = true; this.sent = null; cx.notify(); }, { kind: "ghost", small: true, tooltip: "Adds the walkthrough as a comment on the pull request, after you confirm" })))
+        .child(button(t, "copy", "Copy as Markdown", (_e, cx) => cx.spawn(async (cx) => this.copy(cx)), { kind: "ghost", small: true, tooltip: "The steps and notes, without the code: for a pull request, a review or a chat" }))
+        .when(Boolean(this.sent), (e) => e.child(div().text_size(11.5).text_color(t.dim).truncate().child(this.sent)))
+        .child(div().text_size(11.5).text_color(n ? t.foreground : t.dim).child(n ? `${n} comment${n === 1 ? "" : "s"}` : "Click a line to comment"))
+        .when(n > 0, (e) => e
+          .child(picker(t, "pick-agent", agent ? `${agent.program?.name ?? "Agent"} · ${agent.address}` : "No agent here", (_e, cx) => { this.togglePicker("agent"); cx.notify(); }, { disabled: !agent }))
+          .child(button(t, "send", "Send", (_e, cx) => cx.spawn(async (cx) => this.send(cx)), { kind: "solid", small: true, disabled: !agent, tooltip: "Pastes the comments into the agent and presses Enter" }))));
   }
 }

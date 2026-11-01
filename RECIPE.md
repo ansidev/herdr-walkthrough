@@ -18,10 +18,11 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
    the right the `claude` version in `dim` 11px and, in a dialog, a ghost "Esc" button.
 2. **Toolbar**, at least 42px, padding 7px 14px, wrapping when narrow:
    - scope tabs in a `raised` pill (radius 7, padding 2): Uncommitted, Staged, Unstaged,
-     Branch, Commit; 22px tall, 12px; the chosen one on `popover`, semibold, the rest
+     Branch, Commit, Pull request; 22px tall, 12px; the chosen one on `popover`, semibold, the rest
      `muted`. Each has a tooltip saying what it reads.
    - Branch adds "vs" and a dropdown of the base; Commit adds a dropdown of the commit
-     (`short subject`).
+     (`short subject`); Pull request, once some are listed, a dropdown of the open pull
+     requests (`#12 title`, hint "author · head → base", "· draft", "· this branch").
    - right: a braille spinner while the diff is read, the model dropdown (Haiku, Sonnet,
      Opus), the language dropdown (its own name: Türkçe, Deutsch …), and the action:
      **Generate** (solid) with nothing exact on screen, **Regenerate** (outline) over an
@@ -37,8 +38,9 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
      the menu scrolls while it is open.
 3. **Body**, the rest. One of:
    - a centered message: another machine, "Reading…", "Not a git repository.", "Pick the
-     branch to compare with.", "Nothing to walk through." (no changes in that scope), or the
-     git error;
+     branch to compare with.", "Pick a pull request.", "Reading the pull requests…",
+     "No open pull requests.", "Couldn't list the pull requests." with gh's reason, "Nothing to
+     walk through." (no changes in that scope), or the git or gh error;
    - **intro** (no walkthrough yet), a 620px column: "Read this change in the order it
      makes sense" 18px semibold, one paragraph in `muted`, chips for files, hunks,
      "≈ 3k tokens" (red past the limit), "N generated, not sent" and "N not read", red
@@ -79,7 +81,8 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
        "Not read: larger than 1 MB.", status and `+n −n`; a card opens to its hunks.
 4. **Footer** (with a walkthrough), 44px, top border: "← Previous", "Next →" ("Not
    covered →" on the last step), "2 of 5 read · ← → to move" or "End of the walkthrough";
-   at the right a ghost "Copy as Markdown", the last send's or copy's result, "Click a line to comment" or "2 comments", and with
+   at the right, on the Pull request tab, a ghost "Post to #12", then a ghost "Copy as
+   Markdown", the last send's, copy's or post's result, "Click a line to comment" or "2 comments", and with
    comments an agent dropdown ("Claude Code · t3") and a solid **Send**.
 
 ## How it behaves
@@ -117,6 +120,18 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
   step how many of its hunks changed, and its files as `` `path` +n −n ``. Then
   "### Not covered", one `- `path` (n hunks) — note` per file. No code. The footer says
   "Copied the walkthrough as Markdown." or why it couldn't.
+- **Pull request** (needs `gh`): picking the tab lists the open pull requests again
+  (`gh pr list --state open --limit 50 --json …`, newest update first) and keeps the picked
+  one, else picks the current branch's. Its diff is `gh pr diff N --color=never`, one section
+  with scope `pr`; no new files are added and the folder isn't watched (like Commit). Its
+  source key is `pr:N`, not pinned to the head commit, so after a push the last walkthrough
+  shows with its moved steps Outdated. gh's errors become one sentence: not installed, not
+  logged in, no GitHub remote, too large ("Read it as a Branch instead"), not found.
+- **Post to #12** asks first, in the footer: "Post this walkthrough as a comment on #12?
+  Everyone who can see the pull request will see it." with a solid **Post** and Cancel (Esc
+  cancels too). Post writes the Copy as Markdown text to
+  `~/.herdr/walkthrough/pr-comment.md` and runs `gh pr comment N --body-file …`; over
+  65,536 characters it refuses. The footer says "Posted the walkthrough to #12." or why not.
 - Agent statuses (working, blocked, done, idle) are not shown; the agent dropdown names the
   program and the terminal.
 - Model, language, scope and each repository's base are remembered in
