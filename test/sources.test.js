@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoAt, currentHead, loadSections, defaultBase, baseChoices, recentCommits, sourceKey, describe, MAX_UNTRACKED_BYTES } from "../mods/walkthrough/lib/sources.js";
+import { repoAt, currentHead, loadSections, defaultBase, baseChoices, recentCommits, sourceKey, describe, MAX_UNTRACKED_BYTES, pullRequests, ghError } from "../mods/walkthrough/lib/sources.js";
 import { buildDigest } from "../mods/walkthrough/lib/digest.js";
 import { jobScript, readOutcome } from "../mods/walkthrough/lib/job.js";
 import { chmodSync, readFileSync, existsSync } from "node:fs";
@@ -186,4 +186,52 @@ test("source keys and descriptions", () => {
   assert.equal(sourceKey({ kind: "commit", hash: "abc" }), "commit:abc");
   assert.match(describe({ kind: "branch", base: "main" }, { branch: "feature" }), /branch "feature" adds to "main"/);
   assert.match(describe({ kind: "commit", hash: "0123456789abcdef", subject: "Fix" }, null), /Commit 0123456789ab \("Fix"\)/);
+  // A pull request is one walkthrough whatever its head: when it moves on, the last one shows as outdated.
+  assert.equal(sourceKey({ kind: "pr", number: 12, title: "T" }), "pr:12");
+  assert.match(describe({ kind: "pr", number: 12, title: "Fix it", head: "fix", base: "main" }, null), /Pull request #12 \("Fix it"\), "fix" into "main"/);
+});
+
+// gh, faked: what it is asked, and what it answers.
+const fakeGh = (answers) => {
+  const calls = [];
+  const exec = async (cmd, args) => {
+    calls.push([cmd, ...args].join(" "));
+    if (cmd !== "gh") throw new Error(`unexpected ${cmd}`);
+    const a = answers[args.slice(0, 2).join(" ")];
+    if (a === undefined) throw new Error("spawn gh ENOENT");
+    return typeof a === "string" ? { code: 0, stdout: a, stderr: "" } : a;
+  };
+  return { exec, calls };
+};
+
+test("a pull request is read as GitHub shows it", async () => {
+  const patch = "diff --git a/x.js b/x.js\nindex 1..2 100644\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-a\n+b\n";
+  const { exec, calls } = fakeGh({ "pr diff": patch });
+  const { sections, unread } = await loadSections(exec, "/repo", { kind: "pr", number: 7 });
+  assert.deepEqual(calls, ["gh pr diff 7 --color=never"]);
+  assert.deepEqual(sections, [{ scope: "pr", patch }]);
+  assert.deepEqual(unread, []);
+  assert.equal(buildDigest(sections).files[0].hunks.length, 1);
+});
+
+test("gh's failures say what to do", async () => {
+  await assert.rejects(loadSections(fakeGh({}).exec, "/repo", { kind: "pr", number: 7 }), /isn't installed/);
+  const failing = (stderr) => fakeGh({ "pr diff": { code: 1, stdout: "", stderr } }).exec;
+  await assert.rejects(loadSections(failing("HTTP 406: Sorry, the diff exceeded the maximum number of files (300)."), "/repo", { kind: "pr", number: 7 }), /Read it as a Branch/);
+  assert.match(ghError("To get started with GitHub CLI, please run:  gh auth login"), /isn't logged in/);
+  assert.match(ghError("no git remotes found"), /no GitHub remote/);
+  assert.match(ghError("GraphQL: Could not resolve to a PullRequest with the number of 99999. (repository.pullRequest)"), /wasn't found/);
+  assert.equal(ghError("first\nsomething else\n"), "something else");
+});
+
+test("open pull requests, newest update first, the current branch's marked", async () => {
+  const list = [
+    { number: 1, title: "Old", headRefName: "a", baseRefName: "main", author: { login: "x" }, isDraft: false, updatedAt: "2026-10-01T00:00:00Z" },
+    { number: 2, title: "Mine", headRefName: "feature", baseRefName: "main", author: { login: "y" }, isDraft: true, updatedAt: "2026-10-30T00:00:00Z" },
+  ];
+  const { exec, calls } = fakeGh({ "pr list": JSON.stringify(list) });
+  const prs = await pullRequests(exec, "/repo", "feature");
+  assert.match(calls[0], /^gh pr list --state open --limit 50 --json number,title,headRefName,baseRefName,author,isDraft,updatedAt$/);
+  assert.deepEqual(prs.map((p) => [p.number, p.author, p.draft, p.current]), [[2, "y", true, true], [1, "x", false, false]]);
+  await assert.rejects(pullRequests(fakeGh({ "pr list": "not json" }).exec, "/repo"), /something other than a list/);
 });

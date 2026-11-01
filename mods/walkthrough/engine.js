@@ -7,7 +7,7 @@
 //   preferences.md         optional: the reader's own wishes, added to every prompt
 
 import { exec, home, readTextFile, writeTextFile } from "herdr";
-import { loadSections, sourceKey, describe, git, worthReading } from "./lib/sources.js";
+import { loadSections, sourceKey, describe, git, worthReading, ghError } from "./lib/sources.js";
 import { buildDigest } from "./lib/digest.js";
 import { buildPrompt } from "./lib/prompt.js";
 import { SCHEMA, normalize, VERSION } from "./lib/walkthrough.js";
@@ -51,6 +51,23 @@ export async function copyText(text) {
 }
 
 const COPY = 'if command -v pbcopy >/dev/null; then pbcopy < "$1"; elif command -v wl-copy >/dev/null; then wl-copy < "$1"; elif command -v xclip >/dev/null; then xclip -selection clipboard < "$1"; else echo "No clipboard program found (pbcopy, wl-copy or xclip)." >&2; exit 1; fi';
+
+// GitHub refuses a comment longer than this.
+export const MAX_COMMENT_CHARS = 65536;
+
+/**
+ * Posts text as a comment on a pull request, through a file like the clipboard.
+ * @returns {Promise<string>} the comment's URL, as gh prints it
+ */
+export async function postComment(top, number, text) {
+  if (text.length > MAX_COMMENT_CHARS) throw new Error(`It's too long for a GitHub comment (${text.length.toLocaleString("en")} characters; the limit is ${MAX_COMMENT_CHARS.toLocaleString("en")}).`);
+  const path = `${dataDir()}/pr-comment.md`;
+  await write(path, text);
+  let r;
+  try { r = await exec("gh", ["pr", "comment", String(number), "--body-file", path], { cwd: top }); } catch { throw new Error("The GitHub CLI (gh) isn't installed."); }
+  if (r.code !== 0) throw new Error(ghError(r.stderr || r.stdout));
+  return (r.stdout ?? "").trim().split("\n").pop() ?? "";
+}
 
 export async function claudeVersion() {
   try {

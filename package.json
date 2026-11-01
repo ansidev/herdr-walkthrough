@@ -1,6 +1,6 @@
 {
   "name": "herdr-walkthrough",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "A Herdr mod: read a diff in the order it makes sense, explained step by step by Claude.",
