@@ -10,12 +10,12 @@ change and never judges it.
 
 ## What you see
 
-A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a pane, on
+A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as a pane, on
 `theme().background`. Text 13px, `theme().foreground`. Top to bottom:
 
-1. **Header**, 44px, bottom border `border`: a `◆` in `accent`, "Walkthrough" 14px
+1. **Header**, 40px, bottom border `border`: a 12px `◆` in `accent`, "Walkthrough" 13.5px
    semibold, then the repository name and `⎇ branch` (or "(detached)") in `dim` 12px; at
-   the right the `claude` version in `dim` 11px and, in a dialog, a ghost "Esc" button.
+   the right, in a dialog, a ghost "Esc" button.
 2. **Toolbar**, at least 42px, padding 7px 14px, wrapping when narrow:
    - scope tabs in a `raised` pill (radius 7, padding 2): Uncommitted, Staged, Unstaged,
      Branch, Commit, Pull request; 22px tall, 12px; the chosen one on `popover`, semibold, the rest
@@ -51,11 +51,13 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
    - **progress** (first generation running), centered: ✓ Read the diff (N hunks), a
      spinner on "Asking Claude Haiku" with the elapsed `m:ss`, ○ Putting the steps together,
      a line saying it runs in the background, and Cancel;
-   - **the walkthrough**: a 280px contents column (right border) and the page.
-     - Contents: the title 13.5px semibold, the summary 12px `muted`, then each part's title
-       10.5px uppercase `dim` and its steps: a pill (step number on `raised`; ✓ in `ansi2`
-       once read; `!` on `blocked` when outdated), the title 12.5px (`muted` for skim
-       steps), and a 6px `accent` dot for key steps; the chosen row on `selected`. After a
+   - **the walkthrough**: a 248px contents column (right border) and the page.
+     - Contents: the title 13.5px semibold, the summary 12px `muted` (line height 1.5), then
+       each part's title 10px uppercase `dim` and its steps: an 18px square (radius 5) with
+       the step number in `muted` on `raised`, ✓ in `ansi2` on `raised` once read, `!` in
+       `blocked` on `blocked` + `29` alpha when outdated; the title 12.5px (`muted` for skim
+       steps), and a 6px `accent` dot for key steps. Every row has a 2px left border, `accent`
+       on the chosen row (which is on `accent` + `1f` alpha) and transparent otherwise. After a
        rule, "… Not covered" with its count, then "Haiku · English · date · $0.002" in
        `dim` 10.5px. Hidden when the walkthrough is narrower than 720px.
      - Banners over the page (7px radius, 1px border): "Writing a new walkthrough with
@@ -65,24 +67,32 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
        this code yet." + Generate; or, when the code is the same and only the preferences or
        the prompt version changed, "This code hasn't changed, but your preferences or this
        mod's prompt have since this walkthrough was written." + Regenerate.
-     - Page, scrolling, padding 16px 22px: "PART · STEP 2 OF 5" 11px `dim`; the title 18px
-       semibold with chips **Key change** (`accent`), **Context**, **Outdated** (`blocked`);
-       the explanation 13.5px, line height 1.55, at most 820px wide; notes as a `blocked`
-       chip (Decision, Upkeep, Limitation, Divergence, Untested, each with a tooltip) and
-       12.5px `muted` text; for an outdated step "1 of the 2 hunks this step described
+     - Page, scrolling, padding 16px 22px, gap 10: "PART · STEP 2 OF 5" 10.5px semibold
+       `dim`; the title 17px semibold with tinted chips **Key change** (`accent` on `accent`
+       + `14`), **Context** (on `raised`), **Outdated** (`blocked` on `blocked` + `14`); the
+       explanation 13.5px, line height 1.6, at most 820px wide; notes, full width up to
+       820px, as a `blocked` chip on `blocked` + `12` (Decision, Upkeep, Limitation,
+       Divergence, Untested, each with a tooltip) beside 12.5px `muted` text that wraps; for an outdated step "1 of the 2 hunks this step described
        changed or are gone"; the files with `+n −n`; then the code.
-     - Code: one bordered block; a 26px `raised` header per file (path semibold, status or
-       "renamed from x"); a 20px hunk header on `hover` in the terminal font; 20px lines in
-       the terminal font 11.5px: number (44px, right-aligned, `dim`), sign (`ansi2`/
-       `ansi1`), text unwrapped; added lines on `ansi2` + `1c` alpha, removed on `ansi1` +
-       `1c`. At most 2,500 lines per page, then "N more lines not drawn here."
+     - Code: one bordered block (radius 8); a 28px `raised` header per file with a bottom
+       border (path semibold, status or "renamed from x"); a 20px hunk header on `hover` in
+       the terminal font; 20px lines in the terminal font 11.5px: number (44px,
+       right-aligned, `dim`), sign (`ansi2`/`ansi1`), text unwrapped and coloured by
+       `lib/highlight.js` from the theme: keywords `ansi5`, strings `ansi2`, numbers and
+       constants (true, null, None …) `ansi3`, calls `ansi4`, Capitalised names `ansi6`,
+       comments `dim`, the rest `foreground`. The comment style follows the extension (`#`
+       for Python, Ruby, shell, YAML …, else `//` and `/* */`); Markdown, JSON, text and
+       markup stay plain. Each line is coloured alone, so a comment or string spanning lines
+       is only coloured on its first. Added lines on `ansi2` + `1a` alpha, removed on `ansi1`
+       + `1a`. At most 2,500 lines per page, then "N more lines not drawn here."
      - Not covered page: the title, one paragraph, then a bordered card per file: ▶/▼,
        path, the model's note or "Generated file, not sent to the model." / "Binary file." /
        "Not read: larger than 1 MB.", status and `+n −n`; a card opens to its hunks.
 4. **Footer** (with a walkthrough), 44px, top border: "← Previous", "Next →" ("Not
    covered →" on the last step), "2 of 5 read · ← → to move" or "End of the walkthrough";
    at the right, on the Pull request tab, a ghost "Post to #12", then a ghost "Copy as
-   Markdown", the last send's, copy's or post's result, "Click a line to comment" or "2 comments", and with
+   Markdown", the last send's, copy's or post's result (in `ansi2` with a ✓ when it
+   worked), "Click a line to comment" or "2 comments", and with
    comments an agent dropdown ("Claude Code · t3") and a solid **Send**.
 
 ## How it behaves
