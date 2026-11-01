@@ -39,6 +39,19 @@ export async function ensureDirs() {
 }
 
 /** Whether Claude Code's `claude` can be started: its version, or null. */
+/**
+ * Puts text on the system clipboard. `exec` takes no input, so the text goes
+ * through a file: pbcopy on macOS, else wl-copy or xclip.
+ */
+export async function copyText(text) {
+  const path = `${dataDir()}/clipboard.md`;
+  await write(path, text);
+  const r = await exec("sh", ["-c", COPY, "sh", path]);
+  if (r.code !== 0) throw new Error((r.stderr || "No clipboard program found (pbcopy, wl-copy or xclip).").trim());
+}
+
+const COPY = 'if command -v pbcopy >/dev/null; then pbcopy < "$1"; elif command -v wl-copy >/dev/null; then wl-copy < "$1"; elif command -v xclip >/dev/null; then xclip -selection clipboard < "$1"; else echo "No clipboard program found (pbcopy, wl-copy or xclip)." >&2; exit 1; fi';
+
 export async function claudeVersion() {
   try {
     const r = await exec("claude", ["--version"]);

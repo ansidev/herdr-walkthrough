@@ -79,7 +79,7 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
        "Not read: larger than 1 MB.", status and `+n −n`; a card opens to its hunks.
 4. **Footer** (with a walkthrough), 44px, top border: "← Previous", "Next →" ("Not
    covered →" on the last step), "2 of 5 read · ← → to move" or "End of the walkthrough";
-   at the right the last send's result, "Click a line to comment" or "2 comments", and with
+   at the right a ghost "Copy as Markdown", the last send's or copy's result, "Click a line to comment" or "2 comments", and with
    comments an agent dropdown ("Claude Code · t3") and a solid **Send**.
 
 ## How it behaves
@@ -109,13 +109,21 @@ A dialog 90% of the window wide and tall (`modal`), on `theme().popover`; as a p
   (`path:line` `` `code` ``: text) into the chosen agent with `hc send` (which presses
   Enter), then clears them. Agents offered: those in this space, the one the dialog opened
   over first, then the most recently active.
+- **Copy as Markdown** puts the walkthrough on the clipboard (through
+  `~/.herdr/walkthrough/clipboard.md` and `pbcopy`, else `wl-copy` or `xclip`): `## title`,
+  the summary, a `<sub>` line (what was read · model · language · cost), then per part a
+  `###` heading and its blurb, and per step "**N. title**" with · **Key change** /
+  · _Context_ / · _Outdated_, its text, each note as `> **Decision:** …`, for an outdated
+  step how many of its hunks changed, and its files as `` `path` +n −n ``. Then
+  "### Not covered", one `- `path` (n hunks) — note` per file. No code. The footer says
+  "Copied the walkthrough as Markdown." or why it couldn't.
 - Agent statuses (working, blocked, done, idle) are not shown; the agent dropdown names the
   program and the terminal.
 - Model, language, scope and each repository's base are remembered in
   `shared("walkthrough.prefs")`. The first language is the system's (`defaults read -g
   AppleLanguages`, else `$LANG`).
 - Keys from `keys.json`: `cmd-shift-k` → `mod.open:walkthrough`. Mod commands:
-  `walkthrough.generate`, `.cancel`, `.next`, `.prev`.
+  `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`.
 
 ## Built from
 
