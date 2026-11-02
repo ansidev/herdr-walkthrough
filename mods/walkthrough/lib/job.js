@@ -90,7 +90,7 @@ export function readOutcome({ out, err, code }) {
     throw Object.assign(new Error(why + (jsonlText ? ` :: ${jsonlText.slice(0, 200)}` : "")), { code: "failed" });
   }
   if (answer.is_error || (answer.subtype && answer.subtype !== "success")) {
-    const why = typeof answer.result === "string" && answer.result.trim() ? answer.result.trim() : answer.subtype ?? "claude reported an error";
+    const why = typeof answer.result === "string" && answer.result.trim() ? answer.result.trim() : answer.subtype ?? "the runner reported an error";
     throw Object.assign(new Error(why), { code: /log ?in/i.test(why) ? "login" : "failed" });
   }
   if (answer.code || answer.files) return { raw: answer, cost: typeof answer.total_cost_usd === "number" ? answer.total_cost_usd : null };
