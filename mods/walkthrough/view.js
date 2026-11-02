@@ -323,7 +323,7 @@ export class Walkthrough {
     try {
       // The key of exactly what is sent, not of whatever the last read saw.
       const key = keyFor(repo, diff, model, language, preferences);
-      this.setJob(await startJob(repo, diff, { key, model, language, prompt, source, runner: "claude" }));
+      this.setJob(await startJob(repo, diff, { key, model, language, prompt, source, runner: this.runner ?? "claude" }));
     } catch (err) {
       this.genError = `Couldn't start claude: ${String(err?.message ?? err)}`;
     }
