@@ -52,15 +52,48 @@ echo $? > code.tmp && mv code.tmp code
  */
 export function readOutcome({ out, err, code }) {
   let answer = null;
+  // Pi's --mode json emits a JSONL event stream; collect the final assistant text.
+  let jsonlText = "";
+  if (out && String(out).includes("\n{")) {
+    try {
+      const lines = String(out).split("\n").map((l) => l.trim()).filter(Boolean);
+      const objs = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const assistantMessages = objs.filter((o) => o.type === "message_end" && o.message?.role === "assistant");
+      const last = assistantMessages[assistantMessages.length - 1];
+      const content = last?.message?.content;
+      if (Array.isArray(content)) {
+        jsonlText = content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      } else if (typeof content === "string") {
+        jsonlText = content;
+      }
+      if (jsonlText) {
+        try {
+          const parsed = JSON.parse(jsonlText.trim());
+          if (parsed && (parsed.code || parsed.files)) return { raw: parsed, cost: null };
+        } catch {
+          try {
+            const parsed = parseJson(jsonlText);
+            if (parsed) return { raw: parsed, cost: null };
+          } catch {}
+        }
+      }
+    } catch {}
+  }
   try { answer = out ? JSON.parse(out) : null; } catch { answer = null; }
   if (!answer) {
-    const why = String(err ?? "").trim().split("\n").filter(Boolean).slice(-3).join(" ") || `claude exited with ${String(code ?? "?").trim()}`;
-    throw Object.assign(new Error(why), { code: "failed" });
+    // Last resort: try whole output as JSON.
+    try {
+      const parsed = out ? JSON.parse(String(out).trim()) : null;
+      if (parsed && (parsed.code || parsed.files)) return { raw: parsed, cost: null };
+    } catch {}
+    const why = String(err ?? "").trim().split("\n").filter(Boolean).slice(-3).join(" ") || `runner exited with ${String(code ?? "?").trim()}`;
+    throw Object.assign(new Error(why + (jsonlText ? ` :: ${jsonlText.slice(0, 200)}` : "")), { code: "failed" });
   }
   if (answer.is_error || (answer.subtype && answer.subtype !== "success")) {
     const why = typeof answer.result === "string" && answer.result.trim() ? answer.result.trim() : answer.subtype ?? "claude reported an error";
     throw Object.assign(new Error(why), { code: /log ?in/i.test(why) ? "login" : "failed" });
   }
+  if (answer.code || answer.files) return { raw: answer, cost: typeof answer.total_cost_usd === "number" ? answer.total_cost_usd : null };
   const raw = answer.structured_output ?? parseJson(answer.result);
   return { raw, cost: typeof answer.total_cost_usd === "number" ? answer.total_cost_usd : null };
 }
