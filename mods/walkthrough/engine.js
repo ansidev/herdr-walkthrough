@@ -71,6 +71,7 @@ export async function postComment(top, number, text) {
 }
 
 export const claudeVersion = () => runnerVersion(exec, "claude");
+export const piVersion = () => runnerVersion(exec, "pi");
 
 /**
  * The diff of a source as it is now, parsed, with what the model would read.

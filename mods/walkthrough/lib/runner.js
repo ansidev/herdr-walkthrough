@@ -25,7 +25,28 @@ const claude = {
   },
 };
 
-export const RUNNERS = [claude];
+const piFlags = [
+  "-p", "--mode", "json", "--no-session", "--no-tools", "--no-extensions",
+  "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+];
+
+const piCommand = (model) => `pi ${piFlags.map(shellQuote).join(" ")} --model ${model} --system-prompt "$(cat system.txt)"`;
+
+const pi = {
+  key: "pi",
+  name: "Pi",
+  executable: "pi",
+  versionArgs: ["--version"],
+  processMarkers: ["--mode", "json", "--no-session", "--no-tools"],
+  command(model) {
+    return piCommand(shellQuote(model));
+  },
+  scriptCommand() {
+    return piCommand('"$1"');
+  },
+};
+
+export const RUNNERS = [claude, pi];
 
 /** Resolve an explicitly configured runner, refusing missing and unknown values. */
 export function runnerOf(key) {
