@@ -10,6 +10,7 @@ import { numberLines } from "./lib/hunks.js";
 import { tokenize } from "./lib/highlight.js";
 import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
 import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
+import { RUNNERS } from "./lib/runner.js";
 import { estimateTokens, codeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
 import { toMarkdown } from "./lib/export.js";
@@ -65,6 +66,7 @@ export class Walkthrough {
     this.scope = SCOPES.some((s) => s.key === p.scope) ? p.scope : SCOPES.some((s) => s.key === saved.scope) ? saved.scope : "uncommitted";
     this.model = MODELS.some((m) => m.key === saved.model) ? saved.model : DEFAULT_MODEL;
     this.language = saved.language ?? null; // null until the system's is read
+    this.runner = RUNNERS.some((r) => r.key === saved.runner) ? saved.runner : "claude";
     this.repo = undefined; // undefined: looking, null: not in git
     this.base = null;
     this.bases = [];
@@ -375,6 +377,7 @@ export class Walkthrough {
     this.picking = null;
     if (kind !== "agent") { this.genError = null; this.loading = true; }
     if (kind === "model") { this.model = value; savePrefs({ model: value }); }
+    if (kind === "runner") { this.runner = value; savePrefs({ runner: value }); }
     if (kind === "language") { this.language = value; savePrefs({ language: value }); }
     if (kind === "base") { this.base = value; savePrefs({ bases: { ...(prefs().bases ?? {}), [this.repo.top]: value } }); }
     if (kind === "commit") this.commit = value;
@@ -534,6 +537,7 @@ export class Walkthrough {
       .child(div().flex_1())
       .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
       .child(picker(t, "pick-agent", this.agent() ? `${this.agent().program?.name ?? "Agent"} · ${this.agent().address}` : "No agent", open("agent"), { tooltip: "Agent", disabled: !this.agent() }))
+      .child(picker(t, "pick-runner", (RUNNERS.find((r) => r.key === this.runner)?.name ?? "Runner"), open("runner"), { tooltip: "Agent runner" }))
       .child(picker(t, "pick-model", modelOf(this.model).name, open("model"), { tooltip: "Model" }))
       .child(picker(t, "pick-language", languageOf(this.language).name, open("language"), { tooltip: "Language of the explanations" }))
       .child(action);
@@ -550,6 +554,7 @@ export class Walkthrough {
       case "commit": return { side: "left", width: 460, items: this.commits.map((c) => ({ label: `${c.short}  ${c.subject}`, hint: `${c.author} · ${c.when}`, value: c, selected: c.hash === this.commit?.hash })) };
       case "pr": return { side: "left", width: 480, items: (this.prs ?? []).map((p) => ({
         label: `#${p.number}  ${p.title}`, hint: `${p.author} · ${p.head} → ${p.base}${p.draft ? " · draft" : ""}${p.current ? " · this branch" : ""}`, value: p, selected: p.number === this.pr?.number })) };
+      case "runner": return { side: "right", width: 200, items: RUNNERS.map((r) => ({ label: r.name, value: r.key, selected: r.key === this.runner })) };
       case "model": return { side: "right", width: 280, items: MODELS.map((m) => ({ label: m.name, hint: m.about, value: m.key, selected: m.key === this.model })) };
       case "language": return { side: "right", width: 220, items: LANGUAGES.map((l) => ({ label: l.name, right: l.english === l.name ? "" : l.english, value: l.tag, selected: l.tag === this.language })) };
       case "agent": {
