@@ -10,11 +10,11 @@ import { numberLines } from "./lib/hunks.js";
 import { tokenize } from "./lib/highlight.js";
 import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
 import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
-import { RUNNERS } from "./lib/runner.js";
+import { RUNNERS, runnerOf, runnerVersions } from "./lib/runner.js";
 import { estimateTokens, codeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
 import { toMarkdown } from "./lib/export.js";
-import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, claudeVersion, systemLocale, ensureDirs } from "./engine.js";
+import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, systemLocale, ensureDirs } from "./engine.js";
 import { button, chip, menu, picker, formatElapsed, formatTokens } from "./ui.js";
 
 const PREFS = "walkthrough.prefs";
@@ -77,6 +77,7 @@ export class Walkthrough {
     this.prError = null;
     this.confirmPost = false;
     this.posting = false;
+    this.runnerVersions = {};
     this.claude = undefined;
     this.diff = null;
     this.cacheKey = null;
@@ -112,9 +113,10 @@ export class Walkthrough {
 
     cx.spawn(async (cx) => {
       if (!this.folder || this.remote) { this.repo = null; cx.notify(); return; }
-      const [repo, claude, locale] = await Promise.all([repoAt(exec, this.folder).catch(() => null), claudeVersion(), this.language ? null : systemLocale()]);
+      const [repo, versions, locale] = await Promise.all([repoAt(exec, this.folder).catch(() => null), runnerVersions(exec), this.language ? null : systemLocale()]);
       this.repo = repo;
-      this.claude = claude;
+      this.runnerVersions = versions;
+      this.claude = versions[this.runner] ?? null;
       if (!this.language) this.language = fromLocale(locale);
       if (!repo) { cx.notify(); return; }
       await ensureDirs();
@@ -325,7 +327,7 @@ export class Walkthrough {
       const key = keyFor(repo, diff, model, language, preferences);
       this.setJob(await startJob(repo, diff, { key, model, language, prompt, source, runner: this.runner ?? "claude" }));
     } catch (err) {
-      this.genError = `Couldn't start claude: ${String(err?.message ?? err)}`;
+      this.genError = `Couldn't start ${runnerOf(this.runner).name}: ${String(err?.message ?? err)}`;
     }
   }
 
@@ -377,7 +379,7 @@ export class Walkthrough {
     this.picking = null;
     if (kind !== "agent") { this.genError = null; this.loading = true; }
     if (kind === "model") { this.model = value; savePrefs({ model: value }); }
-    if (kind === "runner") { this.runner = value; savePrefs({ runner: value }); }
+    if (kind === "runner") { this.runner = value; this.claude = this.runnerVersions[value] ?? null; savePrefs({ runner: value }); }
     if (kind === "language") { this.language = value; savePrefs({ language: value }); }
     if (kind === "base") { this.base = value; savePrefs({ bases: { ...(prefs().bases ?? {}), [this.repo.top]: value } }); }
     if (kind === "commit") this.commit = value;
@@ -527,7 +529,7 @@ export class Walkthrough {
     const action = busy
       ? button(t, "cancel", "Cancel", (_e, cx) => cx.spawn(async (cx) => this.cancel(cx)), { small: true })
       : button(t, "generate", this.shown?.exact ? "Regenerate" : "Generate", (_e, cx) => cx.spawn(async (cx) => this.generate(cx)),
-        { kind: this.shown?.exact ? "outline" : "solid", small: true, disabled: !this.canGenerate(), tooltip: this.claude === null ? "claude isn't installed" : null });
+        { kind: this.shown?.exact ? "outline" : "solid", small: true, disabled: !this.canGenerate(), tooltip: this.claude === null ? `${runnerOf(this.runner).name} isn't installed` : null });
     return h_flex().min_h(42).flex_none().px(14).py(7).gap(8).items_center().flex_wrap().border_b(1).border_color(t.border)
       .child(tabs)
       .when(this.scope === "branch", (el) => el.child(div().text_size(11.5).text_color(t.dim).child("vs"))
@@ -536,8 +538,7 @@ export class Walkthrough {
       .when(this.scope === "pr" && Boolean(this.prs?.length), (el) => el.child(picker(t, "pick-pr", this.pr ? `#${this.pr.number} ${this.pr.title}` : "Pick a pull request", open("pr"))))
       .child(div().flex_1())
       .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
-      .child(picker(t, "pick-agent", this.agent() ? `${this.agent().program?.name ?? "Agent"} · ${this.agent().address}` : "No agent", open("agent"), { tooltip: "Agent", disabled: !this.agent() }))
-      .child(picker(t, "pick-runner", (RUNNERS.find((r) => r.key === this.runner)?.name ?? "Runner"), open("runner"), { tooltip: "Agent runner" }))
+      .child(picker(t, "pick-runner", (RUNNERS.find((r) => r.key === this.runner)?.name ?? "Runner"), open("runner"), { tooltip: "Agent" }))
       .child(picker(t, "pick-model", modelOf(this.model).name, open("model"), { tooltip: "Model" }))
       .child(picker(t, "pick-language", languageOf(this.language).name, open("language"), { tooltip: "Language of the explanations" }))
       .child(action);
@@ -640,7 +641,10 @@ export class Walkthrough {
           .child(chip(t, `≈ ${formatTokens(tokens)} tokens`, tooBig ? t.ansi1 : undefined))
           .when(d.generatedPaths.length > 0, (e) => e.child(chip(t, `${d.generatedPaths.length} generated, not sent`)))
           .when(d.unread.length > 0, (e) => e.child(chip(t, `${d.unread.length} not read`))))
-        .when(this.claude === null, (e) => e.child(this.notice(t, t.ansi1, "Claude Code's `claude` isn't installed, or isn't on the PATH Herdr starts programs with. Walkthroughs are written by `claude -p`.")))
+        .when(this.claude === null, (e) => {
+          const runner = runnerOf(this.runner);
+          return e.child(this.notice(t, t.ansi1, `${runner.name}'s \`${runner.executable}\` isn't installed, or isn't on the PATH Herdr starts programs with.`));
+        })
         .when(tooBig, (e) => e.child(this.notice(t, t.ansi1, "This diff is too large to send whole, and a walkthrough of part of it would read as complete. Pick a narrower scope.")))
         .when(d.hunkCount === 0 && d.files.length > 0, (e) => e.child(this.notice(t, t.muted, d.generatedPaths.length ? "Only generated files changed; they aren't sent to the model." : "No changed lines to read: binary files, renames or mode changes only.")))
         .when(Boolean(this.genError), (e) => e.child(this.notice(t, t.ansi1, this.genError)))

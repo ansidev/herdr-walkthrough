@@ -64,3 +64,10 @@ export async function runnerVersion(exec, key) {
     return result.code === 0 ? result.stdout.trim() : null;
   } catch { return null; }
 }
+
+/** Installed versions keyed by the static list of supported runners. */
+export async function runnerVersions(exec) {
+  return Object.fromEntries(await Promise.all(
+    RUNNERS.map(async ({ key }) => [key, await runnerVersion(exec, key)]),
+  ));
+}
