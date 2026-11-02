@@ -30,7 +30,7 @@ export function jobScript(runnerKey) {
   return `#!/bin/sh
 # One walkthrough generation. Written by the walkthrough mod for Herdr.
 cd "$(dirname "$0")" || exit 1
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 ${command} < prompt.txt > out.json 2> err.txt &
 pid=$!
 echo $pid > pid
