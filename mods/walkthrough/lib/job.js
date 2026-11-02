@@ -4,6 +4,7 @@
 // doesn't throw away a minute of paid work; the next look finds the answer.
 
 import { parseJson } from "./walkthrough.js";
+import { runnerOf } from "./runner.js";
 
 export const MODELS = [
   { key: "haiku", name: "Haiku", about: "Fast and cheap; fine for most changes" },
@@ -13,31 +14,23 @@ export const MODELS = [
 export const DEFAULT_MODEL = "haiku";
 export const modelOf = (key) => MODELS.find((m) => m.key === key) ?? MODELS[0];
 
-// No tools, no MCP servers, no settings, hooks or skills: the model reads the
-// prompt and answers. Each of those would otherwise ride along on every call
-// (a full Claude Code setup can be hundreds of thousands of tokens).
-export const CLAUDE_FLAGS = [
-  "-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
-  "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
-];
-
 /** Whether a process's command line is a walkthrough run (its pid file may outlive it, and pids are reused). */
-// Matched by the flags the run alone passes together: the program itself can show as claude, a
-// versioned binary or node, depending on how Claude Code was installed.
-export const isRunCommand = (command) => ["--json-schema", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"].every((flag) => String(command).includes(flag));
-
-const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+// Matched by the flags the Claude runner passes together: the program itself can show as claude,
+// a versioned binary or node, depending on how Claude Code was installed.
+export const isRunCommand = (command, runnerKey = "claude") =>
+  runnerOf(runnerKey).processMarkers.every((flag) => String(command).includes(flag));
 
 /**
  * The script a job folder runs: `sh run.sh <model> <seconds>`. A watchdog
  * stops claude after <seconds>, so a hung run ends even when no window is
  * open to notice; it checks every few seconds and leaves with claude.
  */
-export function jobScript() {
+export function jobScript(runnerKey) {
+  const command = runnerOf(runnerKey).command("$1").replace("'$1'", '"$1"');
   return `#!/bin/sh
 # One walkthrough generation. Written by the walkthrough mod for Herdr.
 cd "$(dirname "$0")" || exit 1
-claude ${CLAUDE_FLAGS.map(shellQuote).join(" ")} --model "$1" --json-schema "$(cat schema.json)" --system-prompt "$(cat system.txt)" < prompt.txt > out.json 2> err.txt &
+${command} < prompt.txt > out.json 2> err.txt &
 pid=$!
 echo $pid > pid
 ( waited=0

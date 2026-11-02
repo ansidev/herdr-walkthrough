@@ -10,6 +10,7 @@ import { fromLocale, languageOf } from "../mods/walkthrough/lib/languages.js";
 import { cacheKey, codeKey, deadline, placeKey } from "../mods/walkthrough/lib/cache.js";
 import { worthReading } from "../mods/walkthrough/lib/sources.js";
 import { readOutcome, jobScript, isRunCommand } from "../mods/walkthrough/lib/job.js";
+import { runnerOf } from "../mods/walkthrough/lib/runner.js";
 import { formatComments, addComment, sameSpot } from "../mods/walkthrough/lib/comments.js";
 
 const PATCH = `diff --git a/src/a.js b/src/a.js
@@ -306,6 +307,17 @@ test("readOutcome reads structured output, text answers and failures", () => {
   assert.throws(() => readOutcome({ out: null, err: "", code: "127" }), /exited with 127/);
 });
 
+test("runner configuration validates selection and preserves the Claude command", () => {
+  assert.throws(() => runnerOf(), /Runner is required/);
+  assert.throws(() => jobScript(), /Runner is required/);
+  assert.throws(() => runnerOf("codex"), /Unsupported runner: codex/);
+  const claude = runnerOf("claude");
+  assert.equal(claude.key, "claude");
+  assert.equal(claude.executable, "claude");
+  assert.match(claude.command("haiku"), /^claude '-p' '--output-format' 'json'/);
+  assert.match(claude.command("haiku"), /--model 'haiku'/);
+});
+
 test("only a walkthrough run's command line is taken for one", () => {
   assert.ok(isRunCommand("claude -p --model haiku --tools  --no-session-persistence --strict-mcp-config --setting-sources  --disable-slash-commands --json-schema {}"));
   assert.ok(isRunCommand("node /x/cli.js -p --no-session-persistence --strict-mcp-config --disable-slash-commands --json-schema {}"));
@@ -315,7 +327,7 @@ test("only a walkthrough run's command line is taken for one", () => {
 });
 
 test("the job script passes no tools and quotes empty flags", () => {
-  const s = jobScript();
+  const s = jobScript("claude");
   assert.match(s, /'--tools' '' /);
   assert.match(s, /'--setting-sources' '' /);
   assert.match(s, /--model "\$1"/);

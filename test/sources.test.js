@@ -135,7 +135,7 @@ test("run.sh stops a claude that hangs, and the reason is the error", async () =
   writeFileSync(join(bin, "claude"), "#!/bin/sh\nsleep 60\n");
   chmodSync(join(bin, "claude"), 0o755);
   for (const f of ["schema.json", "system.txt", "prompt.txt"]) writeFileSync(join(job, f), "{}");
-  writeFileSync(join(job, "run.sh"), jobScript());
+  writeFileSync(join(job, "run.sh"), jobScript("claude"));
   const started = Date.now();
   await new Promise((resolve) => execFile("sh", [join(job, "run.sh"), "haiku", "1"], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } }, resolve));
   assert.ok(Date.now() - started < 20_000);

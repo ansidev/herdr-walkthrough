@@ -13,6 +13,7 @@ import { buildPrompt } from "./lib/prompt.js";
 import { SCHEMA, normalize, VERSION } from "./lib/walkthrough.js";
 import { cacheKey, codeKey, placeKey, deadline, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { jobScript, readOutcome, isRunCommand } from "./lib/job.js";
+import { runnerOf, runnerVersion } from "./lib/runner.js";
 
 const MAX_ENTRIES = 200;
 export const dataDir = () => `${home()}/.herdr/walkthrough`;
@@ -69,12 +70,7 @@ export async function postComment(top, number, text) {
   return (r.stdout ?? "").trim().split("\n").pop() ?? "";
 }
 
-export async function claudeVersion() {
-  try {
-    const r = await exec("claude", ["--version"]);
-    return r.code === 0 ? r.stdout.trim() : null;
-  } catch { return null; }
-}
+export const claudeVersion = () => runnerVersion(exec, "claude");
 
 /**
  * The diff of a source as it is now, parsed, with what the model would read.
@@ -162,7 +158,8 @@ export async function jobOf(repo, sk) {
 }
 
 /** Starts a generation in the background and returns its job. */
-export async function startJob(repo, diff, { key, model, language, prompt, source }) {
+export async function startJob(repo, diff, { key, model, language, prompt, source, runner: runnerKey }) {
+  const runner = runnerOf(runnerKey);
   await ensureDirs();
   const dir = jobDir(placeKey(repo.top, diff.sk));
   // A run still going there (another window started it) is stopped, not orphaned.
@@ -170,13 +167,13 @@ export async function startJob(repo, diff, { key, model, language, prompt, sourc
   await exec("rm", ["-rf", dir]);
   await exec("mkdir", ["-p", dir]);
   const meta = {
-    key, code: codeKey(diff.files), model, language, top: repo.top, source, sk: diff.sk, started: Date.now(), deadline: Date.now() + deadline(diff.hunkCount),
+    key, code: codeKey(diff.files), model, language, runner: runner.key, top: repo.top, source, sk: diff.sk, started: Date.now(), deadline: Date.now() + deadline(diff.hunkCount),
     idByAlias: diff.idByAlias, digestFiles: diff.digestFiles, hunkCount: diff.hunkCount,
   };
   await writeTextFile(`${dir}/system.txt`, prompt.system, null);
   await writeTextFile(`${dir}/prompt.txt`, prompt.prompt, null);
   await writeTextFile(`${dir}/schema.json`, JSON.stringify(SCHEMA), null);
-  await writeTextFile(`${dir}/run.sh`, jobScript(), null);
+  await writeTextFile(`${dir}/run.sh`, jobScript(runner.key), null);
   await writeTextFile(`${dir}/meta.json`, JSON.stringify(meta), null);
   // Detached: exec returns at once, and the run outlives this window.
   // run.sh stops claude itself at the deadline, so a hung run ends even with no window open.
@@ -194,15 +191,15 @@ export async function startJob(repo, diff, { key, model, language, prompt, sourc
  * run. After a reboot the number can belong to anything; it is never signalled
  * on the strength of the file alone.
  */
-async function runPid(dir, known = null) {
+async function runPid(dir, known = null, runnerKey = "claude") {
   const pid = known ?? (await readTextFile(`${dir}/pid`).catch(() => null))?.trim();
   if (!pid || !/^\d+$/.test(pid)) return null;
   const r = await exec("ps", ["-o", "command=", "-p", pid]).catch(() => null);
-  return r?.code === 0 && isRunCommand(r.stdout) ? pid : null;
+  return r?.code === 0 && isRunCommand(r.stdout, runnerKey) ? pid : null;
 }
 
-async function stopRun(dir) {
-  const pid = await runPid(dir);
+async function stopRun(dir, runnerKey = "claude") {
+  const pid = await runPid(dir, null, runnerKey);
   if (pid) await exec("kill", [pid]).catch(() => undefined);
 }
 
@@ -213,7 +210,7 @@ async function stopRun(dir) {
 export async function alive(job) {
   job.pid ??= (await readTextFile(`${job.dir}/pid`).catch(() => null))?.trim() || null;
   if (!job.pid) return Date.now() - job.meta.started < 10_000; // not started yet
-  return (await runPid(job.dir, job.pid)) !== null;
+  return (await runPid(job.dir, job.pid, job.meta.runner)) !== null;
 }
 
 /** The cheap look taken every second: the job, finished, once its code is there; else null. */
@@ -223,7 +220,7 @@ export async function finished(job) {
 }
 
 export async function cancelJob(job) {
-  await stopRun(job.dir);
+  await stopRun(job.dir, job.meta.runner);
   await exec("rm", ["-rf", job.dir]);
 }
 
