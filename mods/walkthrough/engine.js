@@ -36,7 +36,7 @@ async function write(path, text) {
 
 export async function ensureDirs() {
   const d = dataDir();
-  await exec("mkdir", ["-p", `${d}/entries`, `${d}/pointers`, `${d}/jobs`]);
+  await exec("mkdir", ["-p", `${d}/entries`, `${d}/pointers`, `${d}/jobs`, `${d}/failures`]);
 }
 
 /** Whether Claude Code's `claude` can be started: its version, or null. */
@@ -237,7 +237,9 @@ export async function finishJob(job) {
   if (moved.code !== 0) return null;
   const read = (name) => readTextFile(`${claimed}/${name}`).catch(() => null);
   try {
-    const { raw, cost } = readOutcome({ out: await read("out.json"), err: await read("err.txt"), code: job.code });
+    const out = await read("out.json");
+    const err = await read("err.txt");
+    const { raw, cost } = readOutcome({ out, err, code: job.code });
     const walkthrough = normalize(raw, job.meta.idByAlias, job.meta.digestFiles);
     const { key, model, language, top, source, sk } = job.meta;
     const entry = { version: VERSION, key, code: job.meta.code, model, language, top, source, sk, generatedAt: Date.now(), took: Date.now() - job.meta.started, cost, walkthrough };
@@ -246,6 +248,22 @@ export async function finishJob(job) {
     await write(pointerPath(placeKey(top, sk)), JSON.stringify({ key, top, source: sk }));
     await evict();
     return entry;
+  } catch (error) {
+    // Keep failed responses: runner contracts differ, and the raw output is the
+    // evidence needed to diagnose a parsing or hunk-alias mismatch.
+    await ensureDirs();
+    const report = {
+      message: String(error?.message ?? error),
+      runner: job.meta.runner,
+      generatedAt: Date.now(),
+      expectedAliases: error?.expectedAliases ?? [],
+      returnedAliases: error?.returnedAliases ?? [],
+    };
+    await writeTextFile(`${claimed}/failure.json`, JSON.stringify(report, null, 2), null).catch(() => undefined);
+    const destination = `${dataDir()}/failures/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const kept = await exec("mv", [claimed, destination]).catch(() => ({ code: 1 }));
+    if (kept.code !== 0) await exec("rm", ["-rf", claimed]);
+    throw error;
   } finally {
     await exec("rm", ["-rf", claimed]);
   }

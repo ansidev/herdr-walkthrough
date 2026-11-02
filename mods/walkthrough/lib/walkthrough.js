@@ -80,6 +80,7 @@ const fail = (message) => Object.assign(new Error(message), { code: "invalid" })
 export function normalize(raw, idByAlias, digestFiles = []) {
   if (!raw || typeof raw !== "object") throw fail("The model returned no walkthrough.");
   const used = new Set();
+  const returnedAliases = new Set();
   let steps = 0, notes = 0, dropped = 0;
   const parts = [];
 
@@ -92,7 +93,9 @@ export function normalize(raw, idByAlias, digestFiles = []) {
       if (!rawStep || typeof rawStep !== "object") continue;
       const hunkIds = [];
       for (const alias of Array.isArray(rawStep.hunks) ? rawStep.hunks : []) {
-        const id = idByAlias[typeof alias === "string" ? alias.trim().replace(/^\[|\]$/g, "") : ""];
+        const key = typeof alias === "string" ? alias.trim().replace(/^\[|\]$/g, "") : "";
+        if (key) returnedAliases.add(key);
+        const id = idByAlias[key];
         if (!id) { dropped++; continue; }
         // A hunk is told once; a second mention would draw the same code twice.
         if (used.has(id) || hunkIds.includes(id) || hunkIds.length >= LIMITS.hunksPerStep) continue;
@@ -123,7 +126,12 @@ export function normalize(raw, idByAlias, digestFiles = []) {
     if (!partSteps.length) continue;
     parts.push({ title: text(rawPart.title, LIMITS.partTitle) || `Part ${parts.length + 1}`, blurb: text(rawPart.blurb), steps: partSteps });
   }
-  if (!parts.length) throw fail("The model's answer had no usable steps for this diff.");
+  if (!parts.length) {
+    const error = fail("The model's answer had no usable steps for this diff.");
+    error.expectedAliases = Object.keys(idByAlias);
+    error.returnedAliases = [...returnedAliases];
+    throw error;
+  }
 
   // A skipped note belongs to a file the model read and some step left partly out.
   const leftOut = new Set(digestFiles.filter((f) => f.aliases.some((a) => !used.has(idByAlias[a]))).map((f) => f.path));

@@ -47,6 +47,18 @@ diff --git a/package-lock.json b/package-lock.json
 +{"v":1}
 `;
 
+test("normalize reports aliases when every model step is unusable", () => {
+  const d = buildDigest(parseDiff(PATCH, "working"));
+  assert.throws(
+    () => normalize({ parts: [{ steps: [{ hunks: ["not-a-hunk"], text: "Explanation." }] }] }, d.idByAlias, d.digestFiles),
+    (error) => {
+      assert.deepEqual(error.expectedAliases, Object.keys(d.idByAlias));
+      assert.deepEqual(error.returnedAliases, ["not-a-hunk"]);
+      return true;
+    },
+  );
+});
+
 test("hash is stable and seeded", () => {
   assert.equal(hash("abc"), hash("abc"));
   assert.notEqual(hash("abc"), hash("abd"));
